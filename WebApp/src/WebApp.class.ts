@@ -40,7 +40,7 @@ interface optionsMenuListStruct {
     id: string|number;
     element: Element;
     side: string,
-    opencallback: Function;
+    opencallback: (el:Element, data: any) => void;
     closecallback: Function;
 };
 interface ContextualMenuclickStruct {
@@ -122,7 +122,6 @@ interface onActionStruct {
     oncancel?: (resolve: (returnData: any) => void, box: ElementManager) => void;
 }
 
-
 class WebApp {
     public WebAppVersion: string = 'v1.0.0';
     public pager: PageController = new PageController();
@@ -134,7 +133,6 @@ class WebApp {
     public animationManager: AnimationManager = new AnimationManager();
     public icon: Icon = new Icon('common/icons/');
     public mouse: MouseManager = new MouseManager();
-
 
     constructor() {
         this.Init();
@@ -367,28 +365,23 @@ class Utils {
             file.click();
         }); return res;
     }
-    /**
-     * 
-     * @param {string} url url to upload file
-     * @param {dictionary} postData action value to send to server
-     * @param {file} file file to upload
-     * @param {function} progress_callback callback function to handle progress giving progress percent
-     * @param {function} callback callback function to handle response
-     */
-    async uploadFile(url:string, file:File, postData = {}, progress_callback: (percent: number) => {}, file_name = 'file') {
-        let res: Object = await new Promise((resolve, reject) => {
+    async uploadFile(url:string, files:{[key:string]: File}, postData = {}, progress_callback?: (percent: number) => {}) {
+        let res: any = await new Promise((resolve, reject) => {
             let formData = new FormData();
             for (let [key, value] of Object.entries(postData)) {
-                if (typeof value === 'string') {
+                if (typeof value ==='string') {
                     formData.append(key, value);
-                }
+                } else formData.append(key, JSON.stringify(value));
             }
-            formData.append(file_name, file);
+
+            for (let key of Object.keys(files)) {
+                formData.append(key, (files as any)[key] as File);
+            }
             let xhr = new XMLHttpRequest();
             xhr.open('POST', url);
             xhr.upload.onprogress = (e) => {
                 let percent = (e.loaded / e.total) * 100;
-                progress_callback(percent);
+                if(progress_callback) progress_callback(percent);
             }
             xhr.onload = () => {
                 let data = JSON.parse(xhr.responseText);
@@ -519,7 +512,6 @@ class Utils {
         let body = new ElementManager('body');
         if(blackout) body.blackout(true);
         this.currentBox = man;
-        console.log(man);
 
         const prom = await new Promise(async (resolve, reject) => {
             const onActionDefault: onActionStruct = {
@@ -748,6 +740,9 @@ class Utils {
             height: ((height) / parentDim.height) * 100
         };
     }
+    static getMethods(obj: object) { 
+        return Object.getOwnPropertyNames(obj).filter(item => typeof (obj as any)[item] === 'function')
+    }   
 }
 class PageController {
     public WebAppVersion: string = '1.0.0';
@@ -762,7 +757,7 @@ class PageController {
     private optionsMenuList: Array<optionsMenuListStruct> = [];
     private optionsMenuListOpen: Array<string|number> = [];
     private return: ReturnManager;
-    private OptionOpenCallback: Function = () => {};
+    private OptionOpenCallback: optionsMenuListStruct['opencallback'] = () => {};
     private OptionCloseCallback: Function = () => {};
     private OptionIDList: Array<string|number> = [];
     private isModule: boolean = false;
@@ -870,22 +865,19 @@ class PageController {
 
         let self = this;
         let res;
-        for (let i = 0; i < html.length; i++) {
-            const page = html[i];
+        for await (const page of html) {
             if (!self.AddToPageNameList(page)) continue;
             res = await utils.Get(self.pathlist.html + page);
             if (res === false) throw new Error(`Page: '${self.pathlist.html}${page}' not found`);
             this.AddContentToPageNameList(page, res);
         }
-        for (let i = 0; i < css.length; i++) {
-            const page = css[i];
+        for await (const page of css) {
             if (!self.AddToPageNameList(page)) continue;
             res = await utils.Get(self.pathlist.css + page);
             if (res === false) throw new Error(`Page: '${self.pathlist.css}${page}' not found`);
             this.AddContentToPageNameList(page, res);
         }
-        for (let i = 0; i < js.length; i++) {
-            const page = js[i];
+        for await (const page of js) {
             if (!self.AddToPageNameList(page)) continue;
             res = await utils.Get(self.pathlist.js + page);
             if (res === false) throw new Error(`Page: '${self.pathlist.js}${page}' not found`);
@@ -915,12 +907,9 @@ class PageController {
     }
     async getPageListContant(id: string, pageListname: string) {
         await this.isDoneList[id];
-        console.log(this.pagename_list);
-        for (let i=0; i < this.pagename_list.length; i++) {
-            const page = this.pagename_list[i];
+        for await (const page of this.pagename_list) {
             if (page.name === pageListname) return page.content;
-        }
-        throw new Error(`Page: '${pageListname}' not found`);
+        } throw new Error(`Page: '${pageListname}' not found`);
     }
     modifyContantPageNameList(pageListname = '', newContent = '') {
         let data = this.pagename_list.find(el => el.name === pageListname);
@@ -995,7 +984,7 @@ class PageController {
     getid() {
         return this.SelectedID;
     }
-    createOptionMenu(selector:string, open_callback = () => {}, close_callback = () => {}, layer = 1, side = 'right') {
+    createOptionMenu(selector:string, open_callback:optionsMenuListStruct['opencallback'] = () => {}, close_callback:optionsMenuListStruct['closecallback'] = () => {}, layer = 1, side = 'right') {
 
         let menu = document.querySelector(selector) as HTMLElement;
         if (!menu) throw new Error(`Element: '${selector}' not found`);
@@ -1037,12 +1026,12 @@ class PageController {
             menu.style.transform = 'translateX(-110%)';
         }
     }
-    openOption(callback_data = () => {}) {
+    openOption(callback_data = {}) {
         let res = this.optionsMenuList.find(opt => opt.id === this.SelectedID);
         if(!res) return;
         (res.element as HTMLElement).style.transform = 'translateX(0%)';
         if (res.opencallback) res.opencallback(res.element, callback_data);
-        if (this.OptionOpenCallback && this.optionsMenuListOpen.length == 0) this.OptionOpenCallback(this);
+        if (this.OptionOpenCallback && this.optionsMenuListOpen.length == 0) this.OptionOpenCallback(res.element, callback_data);
         this.optionsMenuListOpen.push(res.id);
         this.return.add();
     }
@@ -1067,7 +1056,7 @@ class PageController {
             this.return.add();
         }
     }
-    OnOptionOpen(callback:Function) {
+    OnOptionOpen(callback:optionsMenuListStruct['opencallback']) {
         this.OptionOpenCallback = callback;
         return this;
     }
@@ -1188,7 +1177,6 @@ class ContextualMenu {
     }
     open() {
         if (this.menuIsOpen) return;
-        console.log('open');
         this.man.in('body');
         this.man.set('style', `top: ${this.clickPosition.y}px; left: ${this.clickPosition.x}px`);
         const position = this.man.element.getBoundingClientRect();
@@ -1204,7 +1192,6 @@ class ContextualMenu {
     }
     close() {
         if (!this.menuIsOpen) return;
-        console.log('close');
         this.man.classSwitch('closed', 'opened', 'closed');
         this.menuIsOpen = false;
     }
@@ -1323,15 +1310,16 @@ class UserManager {
     public userdata: Object = {};
     public isLoged: boolean = false;
 }
-class InteractionManager extends Utils { // TODO: implement LiveReload to typescript compatible and new ElementManagerVersion
+class InteractionManager { // TODO: implement LiveReload to typescript compatible and new ElementManagerVersion
     public SelectedElement: Element | null;
     private startFrom: number;
     private pressed: boolean;
+    private wordlist: Array<string> = [];
 
-    constructor(selector: string|boolean = false) {
-        super();
+    constructor(selector: string|boolean|Element = false) {
         this.SelectedElement = null;
         if (typeof selector === 'string') this.SelectedElement = document.querySelector(selector);
+        else if(selector instanceof Element) this.SelectedElement = selector;
         this.startFrom = 0;
         this.pressed = false;
     }
@@ -1407,9 +1395,9 @@ class InteractionManager extends Utils { // TODO: implement LiveReload to typesc
     TextCalculator(display_selector: string|Element, maxLen: number = 100) {
         if(this.SelectedElement == null) return;
         let text = this.SelectedElement;
-        const val = text.getAttribute('value');
+        let val = text.getAttribute('value');
         let len = 0;
-        if(val === null) return;
+        if(val === null) val = '';
         if (val) len = parseInt(val);
         
 
@@ -1419,53 +1407,81 @@ class InteractionManager extends Utils { // TODO: implement LiveReload to typesc
             else display_selector = elem;
         }
 
-        if (len > maxLen) {
-            text.setAttribute('value', val.substring(0, maxLen));
-            len = maxLen;
-        }
+        text.addEventListener('input', (e) => {
+            len = (text as HTMLInputElement).value.length;
+            (display_selector as Element).innerHTML = `${len}/${maxLen}`;
+            if (len > maxLen - 1) {
+                val = (text as HTMLInputElement).value;
+                if(val === null) val = '';
+                (text as HTMLInputElement).value = val.slice(0, maxLen - 1);
+            }
+        });
         display_selector.innerHTML = `${len}/${maxLen}`;
     }
-    /*LiveReload(wordlist = Array(), input_callback = false, focus_callback = false, blur_callback = false) {
+    LiveReload(wordlist:Array<string>, initer?: {onInput?: (fromWordList: Array<string>) => void, onSelect?: (value: string) => void}) {
         if(this.SelectedElement == null) return;
-        let man = new ElementManager(this.SelectedElement);
-        let lman = new ElementManager();
-        const dist = man.element.getBoundingClientRect();
-        lman.pos((dist.top + dist.height - 5) + 'px', (dist.left - 5) + 'px').dimention(dist.width + 'px').display(false);
-        lman.class('live-reload-container').in('body').onupdate((self) => {
-            self.element.innerHTML = '';
-            if (self.data.list.length == 0) self.display(false);
-            else self.display(true);
-            self.data.list.forEach((e) => {
-                let item = document.createElement('button');
-                item.innerHTML = e;
-                item.classList.add('live-reload-item');
-                item.addEventListener('click', (e) => {
-                    man.val(e.target.innerHTML);
-                    lman.setdata({ list: [] });
-                });
-                self.element.appendChild(item);
-                let separator = document.createElement('div');
-                separator.classList.add('separator', 'set2');
-                self.element.appendChild(separator);
+
+        let man:ElementManager = new ElementManager('div');
+        let selected:ElementManager;
+        this.wordlist = wordlist;
+
+        const makeElements = async () => {
+            const filterdWordLsit = this.wordlist.filter(el => el.startsWith(selected._val()) === true);
+            initer?.onInput ? initer.onInput(filterdWordLsit) : null;
+            man.destroyChildren();
+            if(selected._val().length < 1) return;
+            for await (const word of filterdWordLsit) man.add(
+                man.create('div').style({ 
+                    width: '100%', 
+                    maxHeight: '20px',
+                    height: '20px',
+                    margin: '3px 0',
+                    display: 'flex',
+                    borderTop: '1px solid black',
+                    borderBottom: '1px solid black',
+                    justifyContent: 'center',
+                    alignItems: 'center',
+                    cursor: 'pointer'
+                })
+                .event('click', () => {
+                    man.destroyChildren();
+                    selected.val(word);
+                    initer?.onSelect ? initer.onSelect(word) : null;
+                })
+                .html(word) );
+
+                redimention();
+        };
+
+        const redimention = () => {
+            const dim = this.SelectedElement?.getBoundingClientRect();
+            if(!dim) return;
+            man.style({
+                width: `${dim.width}px`,
+                maxHeight: '200px',
+                overflow: 'auto',
+                position: 'absolute',
+                top: `${dim.top + dim.height}px`,
+                left: `${dim.left}px`,
+                display: 'flex',
+                flexDirection: 'column',
+                background: 'white',
+                transition: 'none'
             });
-        });
-        man.element.addEventListener('input', (e) => {
-            if (input_callback) input_callback(e);
-            if (man.val() == '') return lman.setdata({ list: [] });
-            lman.setdata({ list: new ArrayManager(wordlist).findAll((e) => e.startsWith(man.val())) });
-        });
-        man.element.addEventListener('focus', (e) => {
-            if (focus_callback) focus_callback();
-            else if (
-                typeof lman.data.list != 'undefined' &&
-                lman.data.list.length > 0
-            ) lman.display(true);
-        });
-        man.element.addEventListener('blur', (e) => {
-            if (blur_callback) blur_callback();
-            else setTimeout(() => lman.display(false), 100);
-        });
-    }*/
+        };
+
+        window.addEventListener('resize', redimention);
+
+        selected = new ElementManager(this.SelectedElement)
+            .event("input", () => {makeElements()})
+            .event('focus', () => {makeElements()})
+            .event('blur',  () => { setTimeout(() => man.destroyChildren(), 200) });
+
+
+        return {
+            setWordlist: (wordlist: Array<string>) => { this.wordlist = wordlist; }
+        };
+    }
     Fold(fold = false, height:number|false = false, width:number|false = false) {
         let el = (this.SelectedElement as HTMLElement);
         if(!el) return;
@@ -2082,6 +2098,29 @@ class AnimationManager {
         });
         return this;
     }
+    clickRipple() {
+        for (let el of this.SelectedElement) {
+            (el as HTMLElement).style.position = 'relative';
+            (el as HTMLElement).style.overflow = 'hidden';
+
+            
+            el.addEventListener('mousedown', (e) => {
+                const ripple = el.getElementsByClassName("ripple")[0];
+                if (ripple) ripple.remove();
+                let event = e as MouseEvent;
+                const circle = document.createElement("span");
+                const diameter = Math.max(el.clientWidth, el.clientHeight);
+                const radius = diameter / 2;
+
+                circle.style.position = "absolute";
+                circle.style.width = circle.style.height = `${diameter}px`;
+                circle.style.left = `${event.clientX - ((el as HTMLElement).offsetLeft + radius)}px`;
+                circle.style.top = `${event.clientY - ((el as HTMLElement).offsetTop + radius)}px`;
+                circle.classList.add("ripple");
+                el.appendChild(circle);
+            });
+        }
+    }
     async differ2(time:number = 1000, styleData: string) {
         await new Promise((resolve) => {
             this.SelectedElement.forEach((el) => {
@@ -2400,7 +2439,6 @@ class ElementManager {
             if(key === id) newAddList[newElement.manager_id] = newElement;
             newAddList[key] = this.addList[key];
         } this.addList = newAddList;
-        console.log(newAddList);
     }
     addAfter(id:string, newElement:ElementManager) {
         if(!this.addList[id]) throw new Error(`insertAfter: ${id} was not found`);
@@ -2570,7 +2608,7 @@ class ElementManager {
             if (found instanceof ElementManager) return found;
         } return found;
     }
-    findAllData(key:string, value:any, scoped = false) {
+    findAllData(key:string, value:any, scoped = false): Array<ElementManager> {
         if (scoped) return this._findAllData(key, value);
         else return this.parent(true)._findAllData(key, value);
     }
@@ -2930,7 +2968,7 @@ class ElementManager {
                 default:
                     if (keys[i].startsWith('element_')) {
                         let elemkey = keys[i].replace('element_', '');
-                        this.element.setAttribute(elemkey, dataTree[keys[i] as keyof ElementManagerSaveStruct]);
+                        if(dataTree[keys[i] as keyof ElementManagerSaveStruct]) this.element.setAttribute(elemkey, dataTree[keys[i] as keyof ElementManagerSaveStruct]);
                     } else (this as any)[keys[i] as keyof ElementManager] = dataTree[keys[i] as keyof ElementManagerSaveStruct];
                     break;
             }
@@ -3041,7 +3079,6 @@ class ElementManager {
         }
         clone.id(`${clone._id()}_${this.cloneNbr}`);
         clone.isClone = true;
-        //console.log(clone, this);
         return await new Promise((resolve, reject) => {    
             this.cloneNbr++;
             resolve(clone) 

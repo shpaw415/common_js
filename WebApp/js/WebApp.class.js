@@ -289,28 +289,25 @@ class Utils {
         });
         return res;
     }
-    /**
-     *
-     * @param {string} url url to upload file
-     * @param {dictionary} postData action value to send to server
-     * @param {file} file file to upload
-     * @param {function} progress_callback callback function to handle progress giving progress percent
-     * @param {function} callback callback function to handle response
-     */
-    async uploadFile(url, file, postData = {}, progress_callback, file_name = 'file') {
+    async uploadFile(url, files, postData = {}, progress_callback) {
         let res = await new Promise((resolve, reject) => {
             let formData = new FormData();
             for (let [key, value] of Object.entries(postData)) {
                 if (typeof value === 'string') {
                     formData.append(key, value);
                 }
+                else
+                    formData.append(key, JSON.stringify(value));
             }
-            formData.append(file_name, file);
+            for (let key of Object.keys(files)) {
+                formData.append(key, files[key]);
+            }
             let xhr = new XMLHttpRequest();
             xhr.open('POST', url);
             xhr.upload.onprogress = (e) => {
                 let percent = (e.loaded / e.total) * 100;
-                progress_callback(percent);
+                if (progress_callback)
+                    progress_callback(percent);
             };
             xhr.onload = () => {
                 let data = JSON.parse(xhr.responseText);
@@ -451,7 +448,6 @@ class Utils {
         if (blackout)
             body.blackout(true);
         this.currentBox = man;
-        console.log(man);
         const prom = await new Promise(async (resolve, reject) => {
             const onActionDefault = {
                 onAccept: () => resolve(man),
@@ -642,10 +638,15 @@ class Utils {
             st.getPropertyValue("-o-transform") ||
             st.getPropertyValue("transform") ||
             "FAIL";
-        var values = tr.split('(')[1].split(')')[0].split(',');
-        var a = values[0];
-        var b = values[1];
-        return Math.round(Math.atan2(b, a) * (180 / Math.PI));
+        try {
+            var values = tr.split('(')[1].split(')')[0].split(',');
+            var a = values[0];
+            var b = values[1];
+            return Math.round(Math.atan2(b, a) * (180 / Math.PI));
+        }
+        catch (e) {
+            return 0;
+        }
     }
     static async sleep(ms) {
         return new Promise(resolve => setTimeout(resolve, ms));
@@ -683,6 +684,9 @@ class Utils {
             width: ((width) / parentDim.width) * 100,
             height: ((height) / parentDim.height) * 100
         };
+    }
+    static getMethods(obj) {
+        return Object.getOwnPropertyNames(obj).filter(item => typeof obj[item] === 'function');
     }
 }
 class PageController {
@@ -806,8 +810,7 @@ class PageController {
             this.pageList.push(array_page);
         let self = this;
         let res;
-        for (let i = 0; i < html.length; i++) {
-            const page = html[i];
+        for await (const page of html) {
             if (!self.AddToPageNameList(page))
                 continue;
             res = await utils.Get(self.pathlist.html + page);
@@ -815,8 +818,7 @@ class PageController {
                 throw new Error(`Page: '${self.pathlist.html}${page}' not found`);
             this.AddContentToPageNameList(page, res);
         }
-        for (let i = 0; i < css.length; i++) {
-            const page = css[i];
+        for await (const page of css) {
             if (!self.AddToPageNameList(page))
                 continue;
             res = await utils.Get(self.pathlist.css + page);
@@ -824,8 +826,7 @@ class PageController {
                 throw new Error(`Page: '${self.pathlist.css}${page}' not found`);
             this.AddContentToPageNameList(page, res);
         }
-        for (let i = 0; i < js.length; i++) {
-            const page = js[i];
+        for await (const page of js) {
             if (!self.AddToPageNameList(page))
                 continue;
             res = await utils.Get(self.pathlist.js + page);
@@ -861,9 +862,7 @@ class PageController {
     }
     async getPageListContant(id, pageListname) {
         await this.isDoneList[id];
-        console.log(this.pagename_list);
-        for (let i = 0; i < this.pagename_list.length; i++) {
-            const page = this.pagename_list[i];
+        for await (const page of this.pagename_list) {
             if (page.name === pageListname)
                 return page.content;
         }
@@ -988,7 +987,7 @@ class PageController {
             menu.style.transform = 'translateX(-110%)';
         }
     }
-    openOption(callback_data = () => { }) {
+    openOption(callback_data = {}) {
         let res = this.optionsMenuList.find(opt => opt.id === this.SelectedID);
         if (!res)
             return;
@@ -996,7 +995,7 @@ class PageController {
         if (res.opencallback)
             res.opencallback(res.element, callback_data);
         if (this.OptionOpenCallback && this.optionsMenuListOpen.length == 0)
-            this.OptionOpenCallback(this);
+            this.OptionOpenCallback(res.element, callback_data);
         this.optionsMenuListOpen.push(res.id);
         this.return.add();
     }
@@ -1149,7 +1148,6 @@ class ContextualMenu {
     open() {
         if (this.menuIsOpen)
             return;
-        console.log('open');
         this.man.in('body');
         this.man.set('style', `top: ${this.clickPosition.y}px; left: ${this.clickPosition.x}px`);
         const position = this.man.element.getBoundingClientRect();
@@ -1166,7 +1164,6 @@ class ContextualMenu {
     close() {
         if (!this.menuIsOpen)
             return;
-        console.log('close');
         this.man.classSwitch('closed', 'opened', 'closed');
         this.menuIsOpen = false;
     }
@@ -1183,7 +1180,7 @@ class Security /* DONE */ {
         return this.string.replaceAll('<', '&lt;').replaceAll('>', '&gt;');
     }
 }
-class WSManager {
+class WSManager extends Utils {
     callbackList = Array();
     WebSocketObject = null;
     wsActive = false;
@@ -1195,8 +1192,8 @@ class WSManager {
     connectInterval = 0;
     intervalcounter = 0;
     url = '';
-    utils = new Utils();
     constructor() {
+        super();
     }
     Init() {
         if (this.wsActive || !this.isActive)
@@ -1230,7 +1227,7 @@ class WSManager {
                 clearInterval(this.connectInterval);
                 this.intervalcounter = 0;
                 this.isActive = false;
-                this.utils.WarningMsg('Connection error with messaging server');
+                this.WarningMsg('Connection error with messaging server');
             }
         }, 10000);
     }
@@ -1266,7 +1263,7 @@ class WSManager {
     }
     send(action, data, callback = () => { }) {
         if (!this.WebSocketObject) {
-            this.utils.WarningMsg('WebSocket not initialized', 'red');
+            this.WarningMsg('WebSocket not initialized', 'red');
             return;
         }
         this.WebSocketObject.send(JSON.stringify({
@@ -1275,7 +1272,7 @@ class WSManager {
         }));
         setTimeout(() => {
             if (!this.wsActive)
-                this.utils.WarningMsg('Failed to send data to server', 'red');
+                this.WarningMsg('Failed to send data to server', 'red');
             callback(this.wsActive);
         }, 1000);
     }
@@ -1284,15 +1281,17 @@ class UserManager {
     userdata = {};
     isLoged = false;
 }
-class InteractionManager extends Utils {
+class InteractionManager {
     SelectedElement;
     startFrom;
     pressed;
+    wordlist = [];
     constructor(selector = false) {
-        super();
         this.SelectedElement = null;
         if (typeof selector === 'string')
             this.SelectedElement = document.querySelector(selector);
+        else if (selector instanceof Element)
+            this.SelectedElement = selector;
         this.startFrom = 0;
         this.pressed = false;
     }
@@ -1367,10 +1366,10 @@ class InteractionManager extends Utils {
         if (this.SelectedElement == null)
             return;
         let text = this.SelectedElement;
-        const val = text.getAttribute('value');
+        let val = text.getAttribute('value');
         let len = 0;
         if (val === null)
-            return;
+            val = '';
         if (val)
             len = parseInt(val);
         if (typeof display_selector == 'string') {
@@ -1380,53 +1379,77 @@ class InteractionManager extends Utils {
             else
                 display_selector = elem;
         }
-        if (len > maxLen) {
-            text.setAttribute('value', val.substring(0, maxLen));
-            len = maxLen;
-        }
+        text.addEventListener('input', (e) => {
+            len = text.value.length;
+            display_selector.innerHTML = `${len}/${maxLen}`;
+            if (len > maxLen - 1) {
+                val = text.value;
+                if (val === null)
+                    val = '';
+                text.value = val.slice(0, maxLen - 1);
+            }
+        });
         display_selector.innerHTML = `${len}/${maxLen}`;
     }
-    /*LiveReload(wordlist = Array(), input_callback = false, focus_callback = false, blur_callback = false) {
-        if(this.SelectedElement == null) return;
-        let man = new ElementManager(this.SelectedElement);
-        let lman = new ElementManager();
-        const dist = man.element.getBoundingClientRect();
-        lman.pos((dist.top + dist.height - 5) + 'px', (dist.left - 5) + 'px').dimention(dist.width + 'px').display(false);
-        lman.class('live-reload-container').in('body').onupdate((self) => {
-            self.element.innerHTML = '';
-            if (self.data.list.length == 0) self.display(false);
-            else self.display(true);
-            self.data.list.forEach((e) => {
-                let item = document.createElement('button');
-                item.innerHTML = e;
-                item.classList.add('live-reload-item');
-                item.addEventListener('click', (e) => {
-                    man.val(e.target.innerHTML);
-                    lman.setdata({ list: [] });
-                });
-                self.element.appendChild(item);
-                let separator = document.createElement('div');
-                separator.classList.add('separator', 'set2');
-                self.element.appendChild(separator);
+    LiveReload(wordlist, initer) {
+        if (this.SelectedElement == null)
+            return;
+        let man = new ElementManager('div');
+        let selected;
+        this.wordlist = wordlist;
+        const makeElements = async () => {
+            const filterdWordLsit = this.wordlist.filter(el => el.startsWith(selected._val()) === true);
+            initer?.onInput ? initer.onInput(filterdWordLsit) : null;
+            man.destroyChildren();
+            if (selected._val().length < 1)
+                return;
+            for await (const word of filterdWordLsit)
+                man.add(man.create('div').style({
+                    width: '100%',
+                    maxHeight: '20px',
+                    height: '20px',
+                    margin: '3px 0',
+                    display: 'flex',
+                    borderTop: '1px solid black',
+                    borderBottom: '1px solid black',
+                    justifyContent: 'center',
+                    alignItems: 'center',
+                    cursor: 'pointer'
+                })
+                    .event('click', () => {
+                    man.destroyChildren();
+                    selected.val(word);
+                    initer?.onSelect ? initer.onSelect(word) : null;
+                })
+                    .html(word));
+            redimention();
+        };
+        const redimention = () => {
+            const dim = this.SelectedElement?.getBoundingClientRect();
+            if (!dim)
+                return;
+            man.style({
+                width: `${dim.width}px`,
+                maxHeight: '200px',
+                overflow: 'auto',
+                position: 'absolute',
+                top: `${dim.top + dim.height}px`,
+                left: `${dim.left}px`,
+                display: 'flex',
+                flexDirection: 'column',
+                background: 'white',
+                transition: 'none'
             });
-        });
-        man.element.addEventListener('input', (e) => {
-            if (input_callback) input_callback(e);
-            if (man.val() == '') return lman.setdata({ list: [] });
-            lman.setdata({ list: new ArrayManager(wordlist).findAll((e) => e.startsWith(man.val())) });
-        });
-        man.element.addEventListener('focus', (e) => {
-            if (focus_callback) focus_callback();
-            else if (
-                typeof lman.data.list != 'undefined' &&
-                lman.data.list.length > 0
-            ) lman.display(true);
-        });
-        man.element.addEventListener('blur', (e) => {
-            if (blur_callback) blur_callback();
-            else setTimeout(() => lman.display(false), 100);
-        });
-    }*/
+        };
+        window.addEventListener('resize', redimention);
+        selected = new ElementManager(this.SelectedElement)
+            .event("input", () => { makeElements(); })
+            .event('focus', () => { makeElements(); })
+            .event('blur', () => { setTimeout(() => man.destroyChildren(), 200); });
+        return {
+            setWordlist: (wordlist) => { this.wordlist = wordlist; }
+        };
+    }
     Fold(fold = false, height = false, width = false) {
         let el = this.SelectedElement;
         if (!el)
@@ -2053,6 +2076,27 @@ class AnimationManager {
         });
         return this;
     }
+    clickRipple() {
+        for (let el of this.SelectedElement) {
+            el.style.position = 'relative';
+            el.style.overflow = 'hidden';
+            el.addEventListener('mousedown', (e) => {
+                const ripple = el.getElementsByClassName("ripple")[0];
+                if (ripple)
+                    ripple.remove();
+                let event = e;
+                const circle = document.createElement("span");
+                const diameter = Math.max(el.clientWidth, el.clientHeight);
+                const radius = diameter / 2;
+                circle.style.position = "absolute";
+                circle.style.width = circle.style.height = `${diameter}px`;
+                circle.style.left = `${event.clientX - (el.offsetLeft + radius)}px`;
+                circle.style.top = `${event.clientY - (el.offsetTop + radius)}px`;
+                circle.classList.add("ripple");
+                el.appendChild(circle);
+            });
+        }
+    }
     async differ2(time = 1000, styleData) {
         await new Promise((resolve) => {
             this.SelectedElement.forEach((el) => {
@@ -2382,7 +2426,6 @@ class ElementManager {
         newElement.parentElement = this;
         let newAddList = {};
         let keys = Object.keys(this.addList);
-        console.log(keys);
         for (let i = 0; i < keys.length; i++) {
             let key = keys[i];
             if (key === id)
@@ -2390,7 +2433,6 @@ class ElementManager {
             newAddList[key] = this.addList[key];
         }
         this.addList = newAddList;
-        console.log(newAddList);
     }
     addAfter(id, newElement) {
         if (!this.addList[id])
@@ -2977,7 +3019,8 @@ class ElementManager {
                 default:
                     if (keys[i].startsWith('element_')) {
                         let elemkey = keys[i].replace('element_', '');
-                        this.element.setAttribute(elemkey, dataTree[keys[i]]);
+                        if (dataTree[keys[i]])
+                            this.element.setAttribute(elemkey, dataTree[keys[i]]);
                     }
                     else
                         this[keys[i]] = dataTree[keys[i]];
@@ -3096,7 +3139,6 @@ class ElementManager {
         }
         clone.id(`${clone._id()}_${this.cloneNbr}`);
         clone.isClone = true;
-        //console.log(clone, this);
         return await new Promise((resolve, reject) => {
             this.cloneNbr++;
             resolve(clone);
